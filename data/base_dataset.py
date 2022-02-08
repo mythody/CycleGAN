@@ -108,10 +108,45 @@ def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, conve
         if grayscale:
             transform_list += [transforms.Normalize((0.5,), (0.5,))]
         else:
-            # transform_list += [transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-            transform_list += [transforms.Normalize(tuple([0.5]*opt.input_nc), tuple([0.5]*opt.input_nc))]
+            transform_list += [transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+            # transform_list += [transforms.Normalize(tuple([0.5]*opt.input_nc), tuple([0.5]*opt.input_nc))]
     return transforms.Compose(transform_list)
 
+def get_transform_pre(opt, grayscale=False, method=Image.BICUBIC, convert=True):
+    transform_list = []
+    if grayscale:
+        transform_list.append(transforms.Grayscale(1))
+    if 'resize' in opt.preprocess:
+        osize = [opt.load_size, opt.load_size]
+        transform_list.append(transforms.Resize(osize, method))
+    elif 'scale_width' in opt.preprocess:
+        transform_list.append(transforms.Lambda(lambda img: __scale_width(img, opt.load_size, opt.crop_size, method)))
+
+    if opt.preprocess == 'none':
+        transform_list.append(transforms.Lambda(lambda img: __make_power_2(img, base=4, method=method)))
+
+    if convert:
+        transform_list += [transforms.ToTensor()]
+        if grayscale:
+            transform_list += [transforms.Normalize((0.5,), (0.5,))]
+        else:
+            transform_list += [transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    return transforms.Compose(transform_list)
+
+def get_transform_post(opt, params=None, grayscale=False, method=Image.BICUBIC, convert=True):
+    transform_list = []
+    if 'crop' in opt.preprocess:
+        if params is None:
+            transform_list.append(transforms.RandomCrop(opt.crop_size))
+        else:
+            transform_list.append(transforms.Lambda(lambda img: __crop(img, params['crop_pos'], opt.crop_size)))
+
+    if not opt.no_flip:
+        if params is None:
+            transform_list.append(transforms.RandomHorizontalFlip())
+        elif params['flip']:
+            transform_list.append(transforms.Lambda(lambda img: __flip(img, params['flip'])))
+    return transforms.Compose(transform_list)
 
 def __make_power_2(img, base, method=Image.BICUBIC):
     ow, oh = img.size

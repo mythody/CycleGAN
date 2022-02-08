@@ -1,3 +1,4 @@
+from unittest import result
 import torch
 import torch.nn as nn
 from torch.nn import init
@@ -198,6 +199,10 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
         net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer)
     elif netD == 'pixel':     # classify if each pixel is real or fake
         net = PixelDiscriminator(input_nc, ndf, norm_layer=norm_layer)
+    elif netD == 'segmentatorDecoder':
+        net = NLayerDiscriminatorWithSegmentDecoder(input_nc, ndf, n_layers=3, norm_layer=norm_layer)
+    elif netD == 'segmentatorEncoder':
+        net = NLayerDiscriminatorWithSegmentEncoder(input_nc, ndf, n_layers=3, norm_layer=norm_layer)
     else:
         raise NotImplementedError('Discriminator model name [%s] is not recognized' % netD)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -613,3 +618,135 @@ class PixelDiscriminator(nn.Module):
     def forward(self, input):
         """Standard forward."""
         return self.net(input)
+
+
+
+class NLayerDiscriminatorWithSegmentEncoder(nn.Module):
+    """Defines a PatchGAN discriminator"""
+
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d):
+        """Construct a PatchGAN discriminator
+
+        Parameters:
+            input_nc (int)  -- the number of channels in input images
+            ndf (int)       -- the number of filters in the last conv layer
+            n_layers (int)  -- the number of conv layers in the discriminator
+            norm_layer      -- normalization layer
+        """
+        super(NLayerDiscriminatorWithSegmentEncoder, self).__init__()
+        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        kw = 4
+        padw = 1
+        sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers):  # gradually increase the number of filters
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            sequence += [
+                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
+                norm_layer(ndf * nf_mult),
+                nn.LeakyReLU(0.2, True)
+            ]
+
+        nf_mult_prev = nf_mult
+        nf_mult = min(2 ** n_layers, 8)
+        sequence += [
+            nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+            norm_layer(ndf * nf_mult),
+            nn.LeakyReLU(0.2, True)
+        ]
+
+        
+        discriminator_layer = [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)] # output 1 channel prediction map
+        segmentator_layer   = [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]
+
+        #sequence = [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]
+        self.shared_model = nn.Sequential(*sequence)
+        self.segment_head = nn.Sequential(*segmentator_layer)
+        self.discrim_head = nn.Sequential(*discriminator_layer)
+
+    def forward(self, input, segment=False):
+        """Standard forward."""
+        if segment:
+            return self.segment_head(self.shared_model(input))
+        else:
+            return self.discrim_head(self.shared_model(input))
+
+class NLayerDiscriminatorWithSegmentDecoder(nn.Module):
+    """Defines a PatchGAN discriminator"""
+    """ with a segmentation image as an output """
+
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d):
+        """Construct a PatchGAN discriminator
+
+        Parameters:
+            input_nc (int)  -- the number of channels in input images
+            ndf (int)       -- the number of filters in the last conv layer
+            n_layers (int)  -- the number of conv layers in the discriminator
+            norm_layer      -- normalization layer
+        """
+        super(NLayerDiscriminatorWithSegmentDecoder, self).__init__()
+        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        kw = 4
+        padw = 1
+        nf_mult = 1
+        nf_mult_prev = 1
+        # sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+        for n in range(1, n_layers):  # gradually increase the number of filters
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            # sequence += [
+            #     nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
+            #     norm_layer(ndf * nf_mult),
+            #     nn.LeakyReLU(0.2, True)
+            # ]
+
+        nf_mult_prev = nf_mult
+        nf_mult = min(2 ** n_layers, 8)
+        # sequence += [
+        #     nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+        #     norm_layer(ndf * nf_mult),
+        #     nn.LeakyReLU(0.2, True)
+        # ]
+
+        # sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
+        # self.model = nn.Sequential(*sequence)
+
+        # here we add a decoder to create segmentation masks
+        segmentation_sequence = []
+        # first is the opposite of the last
+        segmentation_sequence += [nn.ConvTranspose2d(1, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw)]
+
+        segmentation_sequence += [
+            nn.ConvTranspose2d(ndf * nf_mult, ndf * nf_mult_prev, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+            norm_layer(ndf * nf_mult_prev),
+            nn.LeakyReLU(0.2, True)
+        ]
+
+        for n in reversed(range(0, n_layers-1)):  # gradually decrease the number of filters
+            nf_mult = nf_mult_prev
+            nf_mult_prev = min(2 ** n, 8)
+            segmentation_sequence += [
+                nn.ConvTranspose2d(ndf * nf_mult, ndf * nf_mult_prev, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
+                norm_layer(ndf * nf_mult_prev),
+                nn.LeakyReLU(0.2, True)
+            ]
+        # the last, output. It should have a shape similar to the input, but with 1 channel, as our segmentation mask has 1 channel
+        segmentation_sequence += [nn.ConvTranspose2d(ndf, 1, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+
+        self.model = nn.Sequential(*segmentation_sequence)
+    
+    def forward(self, input):
+        """Standard forward."""
+        # discrim = self.model(input)
+        # return (discrim , self.segment_model(discrim))
+        return self.model(input)

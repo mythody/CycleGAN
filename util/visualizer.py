@@ -38,7 +38,7 @@ def save_images(webpage, visuals, image_path, aspect_ratio=1.0, width=256, use_w
     ims, txts, links = [], [], []
     ims_dict = {}
     for label, im_data in visuals.items():
-        image = image[:,:3,...]
+        #im_data = im_data[:,:3,...]
         im = util.tensor2im(im_data)
         image_name = '%s_%s.png' % (name, label)
         save_path = os.path.join(image_dir, image_name)
@@ -135,7 +135,8 @@ class Visualizer():
                 images = []
                 idx = 0
                 for label, image in visuals.items():
-                    image = image[:,:3,...]
+                    if image.shape[1]>3:
+                        image = image[:,:3,...]
                     image_numpy = util.tensor2im(image)
                     label_html_row += '<td>%s</td>' % label
                     images.append(image_numpy.transpose([2, 0, 1]))
@@ -163,7 +164,7 @@ class Visualizer():
                 idx = 1
                 try:
                     for label, image in visuals.items():
-                        image = image[:,:3,...]
+                        #image = image[:,:3,...]
                         image_numpy = util.tensor2im(image)
                         self.vis.image(image_numpy.transpose([2, 0, 1]), opts=dict(title=label),
                                        win=self.display_id + idx)
@@ -178,7 +179,7 @@ class Visualizer():
                 table_row = [epoch]
                 ims_dict = {}
                 for label, image in visuals.items():
-                    image = image[:,:3,...]
+                    #image = image[:,:3,...]
                     image_numpy = util.tensor2im(image)
                     wandb_image = wandb.Image(image_numpy)
                     table_row.append(wandb_image)
@@ -194,7 +195,7 @@ class Visualizer():
             self.saved = True
             # save images to the disk
             for label, image in visuals.items():
-                image = image[:,:3,...]
+                #image = image[:,:3,...]
                 image_numpy = util.tensor2im(image)
                 img_path = os.path.join(self.img_dir, 'epoch%.3d_%s.png' % (epoch, label))
                 util.save_image(image_numpy, img_path)
@@ -202,16 +203,23 @@ class Visualizer():
             # update website
             webpage = html.HTML(self.web_dir, 'Experiment name = %s' % self.name, refresh=1)
             for n in range(epoch, 0, -1):
-                webpage.add_header('epoch [%d]' % n)
+                #webpage.add_header('epoch [%d]' % n)
                 ims, txts, links = [], [], []
 
                 for label, image_numpy in visuals.items():
+
                     image_numpy = util.tensor2im(image)
                     img_path = 'epoch%.3d_%s.png' % (n, label)
                     ims.append(img_path)
                     txts.append(label)
                     links.append(img_path)
-                webpage.add_images(ims, txts, links, width=self.win_size)
+                    if len(ims)>9:
+                        webpage.add_header('epoch [%d]' % n)
+                        webpage.add_images(ims, txts, links, width=self.win_size)
+                        ims, txts, links = [], [], []
+                if len(ims)>0:
+                    webpage.add_header('epoch [%d]' % n)
+                    webpage.add_images(ims, txts, links, width=self.win_size)
             webpage.save()
 
     def plot_current_losses(self, epoch, counter_ratio, losses):

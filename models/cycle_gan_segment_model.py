@@ -66,10 +66,9 @@ class CycleGANSegmentModel(BaseModel):
         self.visual_names = visual_names_A + visual_names_B  # combine visualizations for A and B
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>.
         if self.isTrain:
-            self.model_names = ['G_A', 'G_B', 'D_A', 'D_B', 'D_A_Seg', 'D_B_Seg']
+            self.model_names = ['G_A', 'G_B', 'D_A', 'D_B']
         else:  # during test time, only load Gs
-            # self.model_names = ['G_A', 'G_B', 'D_A', 'DSeg_A', 'DSeg_B']
-            self.model_names = ['G_A', 'G_B', 'D_A', 'D_A_Seg', 'D_B_Seg']
+            self.model_names = ['G_A', 'G_B', 'D_A']
 
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
@@ -78,24 +77,9 @@ class CycleGANSegmentModel(BaseModel):
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, opt.netG, opt.norm,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-
-        # self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
-        #                                 opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-        # self.netDSeg_A = networks.define_D(opt.output_nc, opt.ndf, 'segmentator',
-        #                                 opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-        # self.netD_B = networks.define_D(opt.input_nc, opt.ndf, opt.netD,
-        #                                 opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-        # self.netDSeg_B = networks.define_D(opt.output_nc, opt.ndf, 'segmentator',
-        #                                 opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-
-        self.netD_A = networks.define_D(opt.output_nc, opt.ndf, 'segmentatorEncoder',
+        self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
                                         opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-        self.netD_B = networks.define_D(opt.input_nc, opt.ndf, 'segmentatorEncoder',
-                                        opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-
-        self.netD_A_Seg = networks.define_D(opt.output_nc, opt.ndf, 'segmentatorDecoder',
-                                        opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-        self.netD_B_Seg = networks.define_D(opt.input_nc, opt.ndf, 'segmentatorDecoder',
+        self.netD_B = networks.define_D(opt.input_nc, opt.ndf, opt.netD,
                                         opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
 
         if self.isTrain:
@@ -114,11 +98,10 @@ class CycleGANSegmentModel(BaseModel):
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D_A = torch.optim.Adam(self.netD_A.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D_B = torch.optim.Adam(self.netD_B.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-            self.optimizer_DSeg = torch.optim.Adam(itertools.chain(self.netD_A_Seg.parameters(), self.netD_B_Seg.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
+            # self.optimizer_DSeg = torch.optim.Adam(itertools.chain(self.netD_A_Seg.parameters(), self.netD_B_Seg.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
             self.optimizers.append(self.optimizer_D)
-            self.optimizers.append(self.optimizer_DSeg)
 
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -140,30 +123,16 @@ class CycleGANSegmentModel(BaseModel):
         self.rec_A = self.netG_B(self.fake_B)   # G_B(G_A(A))
         self.fake_A = self.netG_B(self.real_B)  # G_B(B)
         self.rec_B = self.netG_A(self.fake_A)   # G_A(G_B(B))
-        # self.seg_fake_A = self.netDSeg_A((self.netD_A(self.fake_A.detach())))
-        # self.seg_fake_A = self.netDSeg_A((self.netD_A(self.fake_A)))
-        # self.seg_real_B = self.netDSeg_B(self.netD_B(self.real_B))
-        # self.seg_fake_A = self.netD_A(self.fake_A.detach())[1]
-        # self.seg_real_B = self.netD_B(self.real_B)[1]
-        # if not self.isTrain:
-        #     self.seg_fake_A = self.netDSeg_A((self.netD_A(self.fake_A.detach()))) # here we use fake As not only from the current batch, but from a larger selection
-        #     self.seg_real_B = self.netDSeg_B(self.netD_B(self.real_B))
         if not self.isTrain:
-            sigmoid_seg_fake_A = torch.sigmoid(self.netD_B_Seg(self.netD_B(self.fake_A,segment=True)))
-            sigmoid_seg_fake_A_with_A = torch.sigmoid(self.netD_A_Seg(self.netD_A(self.fake_A,segment=True)))
-            sigmoid_seg_real_B = torch.sigmoid(self.netD_A_Seg(self.netD_A(self.real_B,segment=True)))
-            sigmoid_seg_fake_B = torch.sigmoid(self.netD_A_Seg(self.netD_A(self.fake_B,segment=True)))
+            sigmoid_seg_fake_A = torch.sigmoid(self.netD_B(self.fake_A,segment=True))
+            sigmoid_seg_fake_A_with_A = torch.sigmoid(self.netD_A(self.fake_A,segment=True))
+            sigmoid_seg_real_B = torch.sigmoid(self.netD_A(self.real_B,segment=True))
+            sigmoid_seg_fake_B = torch.sigmoid(self.netD_A(self.fake_B,segment=True))
             self.seg_fake_A = torch.where(sigmoid_seg_fake_A>0.6,1,0)
             self.seg_real_B = torch.where(sigmoid_seg_real_B>0.6,1,0)
             self.seg_fake_B = torch.where(sigmoid_seg_fake_B>0.6,1,0)
             self.seg_fake_A_with_A = torch.where(sigmoid_seg_fake_A_with_A>0.6,1,0)
-
-            #self.seg_fake_A = self.netD_B_Seg(self.netD_B(self.fake_A,segment=True)) 
-            #self.seg_real_B = self.netD_A_Seg(self.netD_A(self.real_B,segment=True))
-            #self.seg_fake_B = self.netD_A_Seg(self.netD_A(self.fake_B,segment=True))
             
-        
-
     def backward_D_basic(self, netD, real, fake, seg_loss):
         """Calculate GAN loss for the discriminator
 
@@ -190,10 +159,9 @@ class CycleGANSegmentModel(BaseModel):
     def backward_D_A(self):
         """Calculate GAN loss for discriminator D_A"""
         fake_B = self.fake_B_pool.query(self.fake_B)
-        real_B_for_D, real_BSeg_for_D = self.real_B_pool.query(self.real_B,self.real_BSeg)
         # segmentation loss
-        seg_real_B = self.netD_A_Seg(self.netD_A(real_B_for_D,segment=True))
-        loss_DSeg = self.criterionDSeg(seg_real_B, real_BSeg_for_D)
+        seg_real_B = self.netD_A(self.real_B,segment=True)
+        loss_DSeg = self.criterionDSeg(seg_real_B, self.real_BSeg)
 
         self.loss_D_A = self.backward_D_basic(self.netD_A, self.real_B, fake_B, loss_DSeg)
 
@@ -201,8 +169,8 @@ class CycleGANSegmentModel(BaseModel):
         """Calculate GAN loss for discriminator D_B"""
         self.fake_A_for_D, self.real_BSeg_for_D = self.fake_A_pool.query(self.fake_A,self.real_BSeg)
         # segmentation loss
-        seg_fake_A = self.netD_B_Seg(self.netD_B(self.fake_A_for_D,segment=True))
-        loss_DSeg = self.criterionDSeg(seg_fake_A, self.real_BSeg_for_D)
+        seg_fake_A = self.netD_B(self.fake_A.detach(),segment=True)
+        loss_DSeg = self.criterionDSeg(seg_fake_A, self.real_BSeg)
 
         self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A, self.fake_A_for_D, loss_DSeg)
 
@@ -233,8 +201,8 @@ class CycleGANSegmentModel(BaseModel):
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
         # Segmentation loss
-        self.seg_real_B = self.netD_A_Seg(self.netD_A(self.real_B,segment=True))
-        self.seg_fake_A = self.netD_B_Seg(self.netD_B(self.fake_A,segment=True))
+        self.seg_real_B = self.netD_A(self.real_B,segment=True)
+        self.seg_fake_A = self.netD_B(self.fake_A,segment=True)
         self.loss_DSeg = self.criterionDSeg(self.seg_fake_A, self.real_BSeg) + self.criterionDSeg(self.seg_real_B, self.real_BSeg)
         # combined loss and calculate gradients
         self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + self.loss_DSeg
@@ -245,29 +213,18 @@ class CycleGANSegmentModel(BaseModel):
         with torch.autograd.set_detect_anomaly(True):
             # forward
             self.forward()      # compute fake images and reconstruction images.
-            # self.loss_DSeg_A = self.criterionDSeg(self.seg_fake_A, self.real_BSeg)
-            # self.loss_DSeg_B = self.criterionDSeg(self.seg_real_B, self.real_BSeg)
-            # self.loss_DSeg = self.loss_DSeg_A + self.loss_DSeg_B
             # G_A and G_B
-            self.set_requires_grad([self.netD_A, self.netD_B, self.netD_A_Seg, self.netD_B_Seg], False)  # Ds require no gradients when optimizing Gs
+            self.set_requires_grad([self.netD_A, self.netD_B], False)  # Ds require no gradients when optimizing Gs
             self.optimizer_G.zero_grad()  # set G_A and G_B's gradients to zero
             self.backward_G()             # calculate gradients for G_A and G_B
             self.optimizer_G.step()       # update G_A and G_B's weights
 
             # D_A and D_B
-            self.set_requires_grad([self.netD_A, self.netD_B, self.netD_A_Seg, self.netD_B_Seg], True)
+            self.set_requires_grad([self.netD_A, self.netD_B], True)
             self.optimizer_D.zero_grad()   # set D_A and D_B's gradients to zero
             self.backward_D_A()      # calculate gradients for D_A
             self.backward_D_B()      # calculate gradients for D_A
             self.optimizer_D.step()  # update D_A and D_B's weights
-
-        # DSeg_A and DSeg_B
-        # self.set_requires_grad([self.netD_A, self.netD_B, self.netG_A, self.netG_B], False)  # Ds encoders require no gradients when optimizing Ds decoders ? 
-        # self.optimizer_DSeg.zero_grad()  # set DSeg_A and DSeg_B's gradients to zero
-        # self.backward_DSeg_A()           # calculate gradients for DSeg_A
-        # self.backward_DSeg_B()           # calculate gradients for DSeg_B
-        # self.optimizer_DSeg.step()       # update DSeg_A and DSeg_B's weights
-        # self.set_requires_grad([self.netD_A, self.netD_B, self.netG_A, self.netG_B], True)
 
     def compute_visuals(self):
         """Calculate additional output images for visdom and HTML visualization"""

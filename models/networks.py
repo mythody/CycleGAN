@@ -205,6 +205,8 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
         net = NLayerDiscriminatorWithSegmentEncoder(input_nc, ndf, n_layers=3, norm_layer=norm_layer)
     elif netD == 'segmentatorUnet':
         net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 8, 64, norm_layer=norm_layer, use_dropout=False)
+    elif netD == 'segmentatorUnetMeanD':
+        net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 8, 64, norm_layer=norm_layer, use_dropout=False, use_mean_D=True)
     else:
         raise NotImplementedError('Discriminator model name [%s] is not recognized' % netD)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -793,7 +795,7 @@ class UnetDecoderWithSegmentator(nn.Module):
 class UnetNonRecursiveDiscriminator(nn.Module):
     """Create a Unet-based generator"""
 
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, use_mean_D = False):
         """Construct a Unet generator
         Parameters:
             input_nc (int)  -- the number of channels in input images
@@ -809,8 +811,13 @@ class UnetNonRecursiveDiscriminator(nn.Module):
         super(UnetNonRecursiveDiscriminator, self).__init__()
         # construct unet structure
         # first encoder part
+        self.use_mean_D = use_mean_D
         self.encoder_layers = []
         self.decoder_layers = []
+        
+        self.segment_cahnnels = 1
+        self.segment_cahnnels = 3
+
         self.outer_encoder = UnetEncoderSkipConnectionBlock(output_nc,ngf,input_nc=input_nc,outermost=True,norm_layer=norm_layer) # add the outermost layer
         self.encoder_layers.append(UnetEncoderSkipConnectionBlock(ngf, ngf * 2, input_nc=None, norm_layer=norm_layer))
         self.encoder_layers.append(UnetEncoderSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, norm_layer=norm_layer))
@@ -819,6 +826,9 @@ class UnetNonRecursiveDiscriminator(nn.Module):
             self.encoder_layers.append(UnetEncoderSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, norm_layer=norm_layer))
         self.inner_encoder = UnetEncoderSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, norm_layer=norm_layer, innermost=True) # add the innermost encoder layer
 
+        discriminator_head = nn.Conv2d(ngf * 4, 1, kernel_size=3, stride=1)
+        self.discriminator_head = nn.Sequential(*[discriminator_head])
+
         # now we build decoder in the backward order
         self.inner_decoder = UnetDecoderSkipConnectionBlock(ngf*8,ngf*8,norm_layer=norm_layer,innermost=True) # add the innermost decoder layer
         for _ in range(num_downs - 5): # add intermediate layers with ngf * 8 filters
@@ -826,7 +836,9 @@ class UnetNonRecursiveDiscriminator(nn.Module):
         self.decoder_layers.append(UnetDecoderSkipConnectionBlock(ngf * 4, ngf * 8, norm_layer=norm_layer))
         self.decoder_layers.append(UnetDecoderSkipConnectionBlock(ngf * 2, ngf * 4, norm_layer=norm_layer))
         self.decoder_layers.append(UnetDecoderSkipConnectionBlock(ngf, ngf * 2, norm_layer=norm_layer))
-        self.outer_decoder = UnetDecoderSkipConnectionBlock(1, ngf, outermost=True, norm_layer=norm_layer)  # add the outermost layer
+        
+        self.outer_decoder = UnetDecoderSkipConnectionBlock(self.segment_cahnnels, ngf, outermost=True, norm_layer=norm_layer)  # add the outermost layer
+
         self.encoder_model = nn.Sequential(*([self.outer_encoder]+self.encoder_layers+[self.inner_encoder]))
         self.decoder_model = nn.Sequential(*([self.inner_decoder]+self.decoder_layers+[self.outer_decoder]))
 
@@ -834,14 +846,19 @@ class UnetNonRecursiveDiscriminator(nn.Module):
         """Standard forward"""
         connections = []
         output = self.outer_encoder(input)
+        i = 0
         for encoder_layer in self.encoder_layers:
             output, connection = encoder_layer(output)
             connections.append(connection)
+            i+=1
+            if not segment:
+                if i == 2 and not self.use_mean_D:
+                    return self.discriminator_head(output)
+                if i ==3  and self.use_mean_D:
+                    return torch.mean(torch.tanh(output))
+
         output, last_connection = self.inner_encoder(output)
         connections.append(last_connection)
-
-        if not segment:
-            return output.tanh().mean()
 
         output = self.inner_decoder((output))
         for i in range(len(self.decoder_layers)):

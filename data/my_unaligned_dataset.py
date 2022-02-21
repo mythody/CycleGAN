@@ -34,7 +34,10 @@ class MyUnalignedDataset(BaseDataset):
         BaseDataset.__init__(self, opt)
         self.dir_A    = os.path.join(opt.dataroot, opt.phase + 'A')  # create a path '/path/to/data/trainA' RGBD
         self.dir_B    = os.path.join(opt.dataroot, opt.phase + 'B')  # create a path '/path/to/data/trainB' RGBD
-        self.dir_BSeg = os.path.join(opt.dataroot, opt.phase + 'BSeg') # create a path '/path/to/data/trainBSeg' RGBD
+        if self.opt.multiSegment:
+            self.dir_BSeg = os.path.join(opt.dataroot, opt.phase + 'BSegMulti') # create a path '/path/to/data/trainBSegMulti' RGBD
+        else:
+            self.dir_BSeg = os.path.join(opt.dataroot, opt.phase + 'BSeg') # create a path '/path/to/data/trainBSeg' RGBD
 
 
         self.A_paths    = sorted(make_dataset(self.dir_A,    opt.max_dataset_size))    # load images from '/path/to/data/trainA'
@@ -119,7 +122,9 @@ class MyUnalignedDataset(BaseDataset):
 
         grayscale = transforms.Grayscale(1)
         image_depth = grayscale(image_depth)
-        image_segment = grayscale(image_segment) if image_segment is not None else None
+        if image_segment is not None:
+            if not self.opt.multiSegment:
+                image_segment = grayscale(image_segment)
         if 'resize' in self.opt.preprocess:
             osize = [self.opt.load_size, self.opt.load_size]
             resize = transforms.Resize(osize, TF.InterpolationMode.BICUBIC)
@@ -148,6 +153,7 @@ class MyUnalignedDataset(BaseDataset):
         image_depth = normalize_grayscale(image_depth)
         normalize_rgb = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         image_rgb = normalize_rgb(image_rgb)
+        # do we need to normalize segmentation mask?
 
         image_tensor_rgbd = torch.cat((image_rgb,image_depth[0].unsqueeze(0)),0)
         return image_tensor_rgbd, image_tensor_segment

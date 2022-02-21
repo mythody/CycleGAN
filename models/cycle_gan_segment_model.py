@@ -60,7 +60,7 @@ class CycleGANSegmentModel(BaseModel):
         else:
             # visual_names_A = ['real_A_RGB','fake_B_RGB','real_A_Depth','fake_B_Depth','real_BSeg','pred_fakeASeg','real_A', 'fake_B', 'rec_A']
             # visual_names_B = ['real_B', 'fake_A', 'rec_B', 'real_B_RGB', 'fake_A_RGB', 'real_B_Depth', 'fake_A_Depth']
-            visual_names_A = ['real_A_RGB','fake_B_RGB','real_A_Depth','fake_B_Depth','pred_fakeBSeg', 'real_BSeg', 'pred_realBSeg', 'pred_fakeASeg', 'real_Seg_for_fake_A', 'pred_fakeASegDA', 'real_A', 'fake_B', 'rec_A']
+            visual_names_A = ['real_A_RGB','fake_B_RGB','real_A_Depth','fake_B_Depth','pred_fakeBSeg', 'real_BSeg', 'pred_realBSeg', 'pred_fakeASeg', 'pred_realASeg', 'real_Seg_for_fake_A', 'pred_fakeASegDA', 'real_A', 'fake_B', 'rec_A']
             visual_names_B = ['real_B', 'fake_A', 'rec_B', 'real_B_RGB', 'fake_A_RGB', 'real_B_Depth', 'fake_A_Depth']
 
         self.visual_names = visual_names_A + visual_names_B  # combine visualizations for A and B
@@ -125,11 +125,14 @@ class CycleGANSegmentModel(BaseModel):
         self.rec_B = self.netG_A(self.fake_A)   # G_A(G_B(B))
         if not self.isTrain:
             sigmoid_seg_fake_A = torch.sigmoid(self.netD_B(self.fake_A,segment=True))
+            sigmoid_seg_real_A = torch.sigmoid(self.netD_B(self.real_A,segment=True))
             sigmoid_seg_fake_A_with_A = torch.sigmoid(self.netD_A(self.fake_A,segment=True))
             sigmoid_seg_real_B = torch.sigmoid(self.netD_A(self.real_B,segment=True))
             sigmoid_seg_fake_B = torch.sigmoid(self.netD_A(self.fake_B,segment=True))
+
             self.seg_fake_A = torch.where(sigmoid_seg_fake_A>0.6,1,0)
             self.seg_real_B = torch.where(sigmoid_seg_real_B>0.6,1,0)
+            self.seg_real_A = torch.where(sigmoid_seg_real_A>0.6,1,0)
             self.seg_fake_B = torch.where(sigmoid_seg_fake_B>0.6,1,0)
             self.seg_fake_A_with_A = torch.where(sigmoid_seg_fake_A_with_A>0.6,1,0)
             
@@ -242,6 +245,7 @@ class CycleGANSegmentModel(BaseModel):
             self.pred_fakeASeg   = self.seg_fake_A
             self.pred_realBSeg   = self.seg_real_B
             self.real_Seg_for_fake_A = self.real_BSeg
+            self.pred_realASeg   = self.seg_real_A
         else:
-            self.pred_fakeASeg = torch.where(torch.sigmoid(self.seg_fake_A)>0.6,1,0)
+            self.pred_fakeASeg = torch.where(torch.sigmoid(self.seg_fake_A)>0.6,1,0)            
             self.pred_realBSeg = torch.where(torch.sigmoid(self.seg_real_B)>0.6,1,0)

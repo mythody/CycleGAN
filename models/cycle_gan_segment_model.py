@@ -1,3 +1,4 @@
+from http.client import NOT_IMPLEMENTED
 import torch
 import itertools
 from util.image_pool import ImagePool, MyImagePoolWithSegmentation
@@ -70,6 +71,8 @@ class CycleGANSegmentModel(BaseModel):
         else:  # during test time, only load Gs
             self.model_names = ['G_A', 'G_B', 'D_A']
 
+
+        self.segment_channels = self.opt.segmentChannels
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
         # Code (vs. paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
@@ -78,9 +81,9 @@ class CycleGANSegmentModel(BaseModel):
         self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, opt.netG, opt.norm,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
-                                        opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
+                                        opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids, segment_channels = self.segment_channels)
         self.netD_B = networks.define_D(opt.input_nc, opt.ndf, opt.netD,
-                                        opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
+                                        opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids, segment_channels = self.segment_channels)
 
         if self.isTrain:
             if opt.lambda_identity > 0.0:  # only works when input and output images have the same number of channels
@@ -92,7 +95,12 @@ class CycleGANSegmentModel(BaseModel):
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)  # define GAN loss.
             self.criterionCycle = torch.nn.L1Loss()
             self.criterionIdt = torch.nn.L1Loss()
-            self.criterionDSeg = torch.nn.BCEWithLogitsLoss()
+            if self.opt.segmentLoss == 'BCE':
+                self.criterionDSeg = torch.nn.BCEWithLogitsLoss()
+            elif self.opt.segmentLoss == 'CE':
+                self.criterionDSeg = torch.nn.CrossEntropyLoss()
+            else:
+                raise NotImplementedError("--segmentLoss can be either BCE or CE ")
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))

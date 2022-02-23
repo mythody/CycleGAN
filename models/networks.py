@@ -160,7 +160,7 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     return init_net(net, init_type, init_gain, gpu_ids)
 
 
-def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[]):
+def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[], segment_channels = 3):
     """Create a discriminator
 
     Parameters:
@@ -204,9 +204,9 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
     elif netD == 'segmentatorEncoder':
         net = NLayerDiscriminatorWithSegmentEncoder(input_nc, ndf, n_layers=3, norm_layer=norm_layer)
     elif netD == 'segmentatorUnet':
-        net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 8, 64, norm_layer=norm_layer, use_dropout=False)
+        net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 8, 64, norm_layer=norm_layer, use_dropout=False, segment_channels = segment_channels)
     elif netD == 'segmentatorUnetMeanD':
-        net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 8, 64, norm_layer=norm_layer, use_dropout=False, use_mean_D=True)
+        net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 8, 64, norm_layer=norm_layer, use_dropout=False, use_mean_D=True, segment_channels = segment_channels)
     else:
         raise NotImplementedError('Discriminator model name [%s] is not recognized' % netD)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -795,7 +795,7 @@ class UnetDecoderWithSegmentator(nn.Module):
 class UnetNonRecursiveDiscriminator(nn.Module):
     """Create a Unet-based generator"""
 
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, use_mean_D = False):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, use_mean_D = False, segment_channels = 3):
         """Construct a Unet generator
         Parameters:
             input_nc (int)  -- the number of channels in input images
@@ -815,8 +815,7 @@ class UnetNonRecursiveDiscriminator(nn.Module):
         self.encoder_layers = []
         self.decoder_layers = []
         
-        self.segment_cahnnels = 1
-        self.segment_cahnnels = 3
+        self.segment_cahnnels = segment_channels
 
         self.outer_encoder = UnetEncoderSkipConnectionBlock(output_nc,ngf,input_nc=input_nc,outermost=True,norm_layer=norm_layer) # add the outermost layer
         self.encoder_layers.append(UnetEncoderSkipConnectionBlock(ngf, ngf * 2, input_nc=None, norm_layer=norm_layer))

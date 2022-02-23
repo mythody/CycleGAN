@@ -36,7 +36,8 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--lr_policy', type=str, default='linear', help='learning rate policy. [linear | step | plateau | cosine]')
         parser.add_argument('--lr_decay_iters', type=int, default=50, help='multiply by a gamma every lr_decay_iters iterations')
 
-        parser.add_argument('--multiSegment', action='store_true', help='use multichannel segmentation masks')
+        parser.add_argument('--segmentChannels', type=int, default=1, help='Number of channels(classes) in segmentation masks')
+        parser.add_argument('--segmentLoss', type=str, default='BCE', help='Loss type. BCE - binary cross entropy, or CE - cross entropy')
 
         self.isTrain = True
         return parser

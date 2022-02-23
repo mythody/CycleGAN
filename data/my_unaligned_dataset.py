@@ -34,8 +34,10 @@ class MyUnalignedDataset(BaseDataset):
         BaseDataset.__init__(self, opt)
         self.dir_A    = os.path.join(opt.dataroot, opt.phase + 'A')  # create a path '/path/to/data/trainA' RGBD
         self.dir_B    = os.path.join(opt.dataroot, opt.phase + 'B')  # create a path '/path/to/data/trainB' RGBD
-        if self.opt.multiSegment:
+        if self.opt.segmentChannels==3:
             self.dir_BSeg = os.path.join(opt.dataroot, opt.phase + 'BSegMulti') # create a path '/path/to/data/trainBSegMulti' RGBD
+        elif self.opt.segmentChannels==4:
+            self.dir_BSeg = os.path.join(opt.dataroot, opt.phase + 'BSegMult4') 
         else:
             self.dir_BSeg = os.path.join(opt.dataroot, opt.phase + 'BSeg') # create a path '/path/to/data/trainBSeg' RGBD
 
@@ -82,7 +84,10 @@ class MyUnalignedDataset(BaseDataset):
 
         # here add A_Seg_path
         BSeg_path = self.BSeg_paths[index_B]
-        BSeg_img = Image.open(BSeg_path).convert('RGB')
+        if self.opt.segmentChannels!=4:
+            BSeg_img = Image.open(BSeg_path).convert('RGB')
+        else:            
+            BSeg_img = Image.open(BSeg_path)
         
         # apply image transformation
         # A    = self._preprocess(A_img)
@@ -123,14 +128,15 @@ class MyUnalignedDataset(BaseDataset):
         grayscale = transforms.Grayscale(1)
         image_depth = grayscale(image_depth)
         if image_segment is not None:
-            if not self.opt.multiSegment:
+            if self.opt.segmentChannels==1:
                 image_segment = grayscale(image_segment)
         if 'resize' in self.opt.preprocess:
             osize = [self.opt.load_size, self.opt.load_size]
             resize = transforms.Resize(osize, TF.InterpolationMode.BICUBIC)
             image_depth   = resize(image_depth)
             image_rgb     = resize(image_rgb)
-            image_segment = resize(image_segment) if image_segment is not None else None
+            #image_segment = resize(image_segment) if image_segment is not None else None
+            image_segment = transforms.Resize(osize, TF.InterpolationMode.NEAREST)(image_segment) if image_segment is not None else None
 
         if 'crop' in self.opt.preprocess:
             i, j, h, w = transforms.RandomCrop.get_params(image_rgb, output_size=(self.opt.crop_size, self.opt.crop_size))

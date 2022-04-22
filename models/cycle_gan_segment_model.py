@@ -43,6 +43,7 @@ class CycleGANSegmentModel(BaseModel):
             parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
             parser.add_argument('--lambda_identity', type=float, default=0.5, help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
 
+        parser.add_argument('--onRobot', action='store_true', help='if specified, load minimum model needed for image modification only')
         return parser
 
     def __init__(self, opt):
@@ -51,13 +52,18 @@ class CycleGANSegmentModel(BaseModel):
         Parameters:
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
+        print('I am creacting a correct model')
         BaseModel.__init__(self, opt)
+        self.onRobot = opt.onRobot
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B','DSeg'] # , 'DSegA', 'DSegB']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
             visual_names_A = ['real_A_RGB','fake_B_RGB','real_A_Depth','fake_B_Depth','real_BSeg','pred_realBSeg','pred_fakeASeg','real_A', 'fake_B', 'rec_A', 'idt_B']
             visual_names_B = ['real_B', 'fake_A', 'rec_B', 'real_B_RGB', 'fake_A_RGB', 'real_B_Depth', 'fake_A_Depth','idt_A']
+        elif self.onRobot:
+            visual_names_A = ['fake_B_RGB', 'pred_fakeBSeg', 'fake_B_Depth']
+            visual_names_B = []
         else:
             # visual_names_A = ['real_A_RGB','fake_B_RGB','real_A_Depth','fake_B_Depth','real_BSeg','pred_fakeASeg','real_A', 'fake_B', 'rec_A']
             # visual_names_B = ['real_B', 'fake_A', 'rec_B', 'real_B_RGB', 'fake_A_RGB', 'real_B_Depth', 'fake_A_Depth']
@@ -69,8 +75,10 @@ class CycleGANSegmentModel(BaseModel):
         if self.isTrain:
             self.model_names = ['G_A', 'G_B', 'D_A', 'D_B']
         else:  # during test time, only load Gs
-            self.model_names = ['G_A', 'G_B', 'D_A']
-
+            if self.onRobot:
+                self.model_names = ['G_A', 'D_A']
+            else:
+                self.model_names = ['G_A', 'G_B', 'D_A'] # G_A(A) - converts real image to simulated one D_A(G_A(A)) produces segmentation for a converted image
 
         self.segment_channels = self.opt.segmentChannels
         # define networks (both Generators and discriminators)
@@ -78,11 +86,12 @@ class CycleGANSegmentModel(BaseModel):
         # Code (vs. paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
         self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-        self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, opt.netG, opt.norm,
-                                        not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
                                         opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids, segment_channels = self.segment_channels)
-        self.netD_B = networks.define_D(opt.input_nc, opt.ndf, opt.netD,
+        if not self.onRobot:
+            self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, opt.netG, opt.norm,
+                                        not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
+            self.netD_B = networks.define_D(opt.input_nc, opt.ndf, opt.netD,
                                         opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids, segment_channels = self.segment_channels)
 
         if self.isTrain:
@@ -119,30 +128,38 @@ class CycleGANSegmentModel(BaseModel):
 
         The option 'direction' can be used to swap domain A and domain B.
         """
-        AtoB = self.opt.direction == 'AtoB'
-        self.real_A = input['A' if AtoB else 'B'].to(self.device)
-        self.real_B = input['B' if AtoB else 'A'].to(self.device)
-        self.real_BSeg = input['BSeg'].to(self.device)
-        self.image_paths = input['A_paths' if AtoB else 'B_paths']
+        if self.onRobot:
+            self.real_A = input.to(self.device)
+        else:
+            AtoB = self.opt.direction == 'AtoB'
+            self.real_A = input['A' if AtoB else 'B'].to(self.device)
+            self.real_B = input['B' if AtoB else 'A'].to(self.device)
+            self.real_BSeg = input['BSeg'].to(self.device)
+            self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
-        self.fake_B = self.netG_A(self.real_A)  # G_A(A)
-        self.rec_A = self.netG_B(self.fake_B)   # G_B(G_A(A))
-        self.fake_A = self.netG_B(self.real_B)  # G_B(B)
-        self.rec_B = self.netG_A(self.fake_A)   # G_A(G_B(B))
-        if not self.isTrain:
-            sigmoid_seg_fake_A = torch.sigmoid(self.netD_B(self.fake_A,segment=True))
-            sigmoid_seg_real_A = torch.sigmoid(self.netD_B(self.real_A,segment=True))
-            sigmoid_seg_fake_A_with_A = torch.sigmoid(self.netD_A(self.fake_A,segment=True))
-            sigmoid_seg_real_B = torch.sigmoid(self.netD_A(self.real_B,segment=True))
-            sigmoid_seg_fake_B = torch.sigmoid(self.netD_A(self.fake_B,segment=True))
-
-            self.seg_fake_A = torch.where(sigmoid_seg_fake_A>0.6,1,0)
-            self.seg_real_B = torch.where(sigmoid_seg_real_B>0.6,1,0)
-            self.seg_real_A = torch.where(sigmoid_seg_real_A>0.6,1,0)
+        if self.onRobot:
+            self.fake_B = self.netG_A(self.real_A)
+            sigmoid_seg_fake_B = torch.sigmoid(self.netD_A(self.fake_B,segment=True)) 
             self.seg_fake_B = torch.where(sigmoid_seg_fake_B>0.6,1,0)
-            self.seg_fake_A_with_A = torch.where(sigmoid_seg_fake_A_with_A>0.6,1,0)
+        else:
+            self.fake_B = self.netG_A(self.real_A)  # G_A(A)
+            self.rec_A = self.netG_B(self.fake_B)   # G_B(G_A(A))
+            self.fake_A = self.netG_B(self.real_B)  # G_B(B)
+            self.rec_B = self.netG_A(self.fake_A)   # G_A(G_B(B))
+            if not self.isTrain:
+                sigmoid_seg_fake_A = torch.sigmoid(self.netD_B(self.fake_A,segment=True))
+                sigmoid_seg_real_A = torch.sigmoid(self.netD_B(self.real_A,segment=True))
+                sigmoid_seg_fake_A_with_A = torch.sigmoid(self.netD_A(self.fake_A,segment=True))
+                sigmoid_seg_real_B = torch.sigmoid(self.netD_A(self.real_B,segment=True))
+                sigmoid_seg_fake_B = torch.sigmoid(self.netD_A(self.fake_B,segment=True))
+
+                self.seg_fake_A = torch.where(sigmoid_seg_fake_A>0.6,1,0)
+                self.seg_real_B = torch.where(sigmoid_seg_real_B>0.6,1,0)
+                self.seg_real_A = torch.where(sigmoid_seg_real_A>0.6,1,0)
+                self.seg_fake_B = torch.where(sigmoid_seg_fake_B>0.6,1,0)
+                self.seg_fake_A_with_A = torch.where(sigmoid_seg_fake_A_with_A>0.6,1,0)
             
     def backward_D_basic(self, netD, real, fake, seg_loss):
         """Calculate GAN loss for the discriminator
@@ -172,7 +189,7 @@ class CycleGANSegmentModel(BaseModel):
         fake_B = self.fake_B_pool.query(self.fake_B)
         # segmentation loss
         seg_real_B = self.netD_A(self.real_B,segment=True)
-        loss_DSeg = self.criterionDSeg(seg_real_B, self.real_BSeg)
+        loss_DSeg = 0.1*self.criterionDSeg(seg_real_B, self.real_BSeg)
 
         self.loss_D_A = self.backward_D_basic(self.netD_A, self.real_B, fake_B, loss_DSeg)
 
@@ -181,7 +198,7 @@ class CycleGANSegmentModel(BaseModel):
         self.fake_A_for_D, self.real_BSeg_for_D = self.fake_A_pool.query(self.fake_A,self.real_BSeg)
         # segmentation loss
         seg_fake_A = self.netD_B(self.fake_A.detach(),segment=True)
-        loss_DSeg = self.criterionDSeg(seg_fake_A, self.real_BSeg)
+        loss_DSeg = 0.1*self.criterionDSeg(seg_fake_A, self.real_BSeg)
 
         self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A, self.fake_A_for_D, loss_DSeg)
 
@@ -216,7 +233,7 @@ class CycleGANSegmentModel(BaseModel):
         self.seg_fake_A = self.netD_B(self.fake_A,segment=True)
         self.loss_DSeg = self.criterionDSeg(self.seg_fake_A, self.real_BSeg) + self.criterionDSeg(self.seg_real_B, self.real_BSeg)
         # combined loss and calculate gradients
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + self.loss_DSeg
+        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + 0.1*self.loss_DSeg
         self.loss_G.backward()
 
     def optimize_parameters(self):
@@ -239,21 +256,26 @@ class CycleGANSegmentModel(BaseModel):
 
     def compute_visuals(self):
         """Calculate additional output images for visdom and HTML visualization"""
-        self.real_B_RGB = self.real_B[:,:3,...]
-        self.real_A_RGB = self.real_A[:,:3,...]
-        self.fake_B_RGB = self.fake_B[:,:3,...]
-        self.fake_A_RGB = self.fake_A[:,:3,...]
-        self.real_B_Depth = (self.real_B[:,3,...]).unsqueeze(1)
-        self.real_A_Depth = (self.real_A[:,3,...]).unsqueeze(1)
-        self.fake_B_Depth = (self.fake_B[:,3,...]).unsqueeze(1)
-        self.fake_A_Depth = (self.fake_A[:,3,...]).unsqueeze(1)
-        if not self.isTrain:
-            self.pred_fakeBSeg   = self.seg_fake_B
-            self.pred_fakeASegDA = self.seg_fake_A_with_A
-            self.pred_fakeASeg   = self.seg_fake_A
-            self.pred_realBSeg   = self.seg_real_B
-            self.real_Seg_for_fake_A = self.real_BSeg
-            self.pred_realASeg   = self.seg_real_A
+        if self.onRobot:
+            self.fake_B_RGB    =  self.fake_B[:,:3,...]
+            self.fake_B_Depth  = (self.fake_B[:,3,...]).unsqueeze(1)
+            self.pred_fakeBSeg =  self.seg_fake_B
         else:
-            self.pred_fakeASeg = torch.where(torch.sigmoid(self.seg_fake_A)>0.6,1,0)            
-            self.pred_realBSeg = torch.where(torch.sigmoid(self.seg_real_B)>0.6,1,0)
+            self.real_B_RGB   =  self.real_B[:,:3,...]
+            self.real_A_RGB   =  self.real_A[:,:3,...]
+            self.fake_B_RGB   =  self.fake_B[:,:3,...]
+            self.fake_A_RGB   =  self.fake_A[:,:3,...]
+            self.real_B_Depth = (self.real_B[:,3,...]).unsqueeze(1)
+            self.real_A_Depth = (self.real_A[:,3,...]).unsqueeze(1)
+            self.fake_B_Depth = (self.fake_B[:,3,...]).unsqueeze(1)
+            self.fake_A_Depth = (self.fake_A[:,3,...]).unsqueeze(1)
+            if not self.isTrain:
+                self.pred_fakeBSeg   = self.seg_fake_B
+                self.pred_fakeASegDA = self.seg_fake_A_with_A
+                self.pred_fakeASeg   = self.seg_fake_A
+                self.pred_realBSeg   = self.seg_real_B
+                self.real_Seg_for_fake_A = self.real_BSeg
+                self.pred_realASeg   = self.seg_real_A
+            else:
+                self.pred_fakeASeg = torch.where(torch.sigmoid(self.seg_fake_A)>0.6,1,0)            
+                self.pred_realBSeg = torch.where(torch.sigmoid(self.seg_real_B)>0.6,1,0)

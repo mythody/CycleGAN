@@ -205,6 +205,8 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
         net = NLayerDiscriminatorWithSegmentEncoder(input_nc, ndf, n_layers=3, norm_layer=norm_layer)
     elif netD == 'segmentatorUnet':
         net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 8, 64, norm_layer=norm_layer, use_dropout=False, segment_channels = segment_channels)
+    elif netD == 'segmentatorUnet_128':
+        net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 6, 64, norm_layer=norm_layer, use_dropout=False, segment_channels = segment_channels)
     elif netD == 'segmentatorUnetMeanD':
         net = UnetNonRecursiveDiscriminator(input_nc, input_nc, 8, 64, norm_layer=norm_layer, use_dropout=False, use_mean_D=True, segment_channels = segment_channels)
     else:

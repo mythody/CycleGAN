@@ -174,14 +174,23 @@ class CycleGANSegmentModel(BaseModel):
         """
         # Real
         pred_real = netD(real)
+        print('pred_real ',pred_real)
+        print('pred_real.shape ',pred_real.shape)
         loss_D_real = self.criterionGAN(pred_real, True)
+        print('loss_D_real ',loss_D_real)
+        print('loss_D_real.shape ',loss_D_real.shape)
         # Fake
         pred_fake = netD(fake.detach())
+        print('pred_fake ',pred_fake)
+        print('pred_fake.shape ',pred_fake.shape)
         loss_D_fake = self.criterionGAN(pred_fake, False)
+        print('loss_D_fake ',loss_D_fake)
+        print('loss_D_fake.shape ',loss_D_fake.shape)
         # Combined loss and calculate gradients
         # loss_D = (loss_D_real + loss_D_fake) * 0.5 + self.loss_DSeg # or minus
         loss_D = (loss_D_real + loss_D_fake) * 0.5 + seg_loss
         loss_D.backward()
+        exit()
         return loss_D
 
     def backward_D_A(self):
